@@ -1,71 +1,69 @@
 <?php
-class ModelModuleEmagmarketplace extends Model {
-	public function updateOrder($order_id)
-	{
-		$order_id = (int) $order_id;
-		
-		if (!$this->config->get('emagmp_url'))
+class ModelExtensionModuleEmagmarketplace extends Model {
+	public function updateOrder($order_id) {
+		$order_id = (int)$order_id;
+
+		if (!$this->config->get('module_emagmp_url'))
 			return;
-			
+
 		$query = $this->db->query('
 			SELECT *
 			FROM `'.DB_PREFIX.'emagmp_order_history`
 			WHERE id_order = '.$order_id.'
 		');
-		
+
 		if (!$query->num_rows)
 			return;
-		
+
 		$order_history = $query->row;
+
 		$order_history['emag_definition'] = unserialize($order_history['emag_definition']);
 		//$order_history['emag_definition'] = unserialize(file_get_contents(DIR_APPLICATION.'../emagmp_test.txt'));
-		
+
 		$order_history['last_definition'] = unserialize($order_history['last_definition']);
 		if (!is_array($order_history['last_definition']))
 			$order_history['last_definition'] = array();
-			
+
 		$query = $this->db->query("
 			SELECT o.*, IFNULL(ot.value, 0) AS shipping_total
 			FROM `" . DB_PREFIX . "order` o
 			LEFT JOIN " . DB_PREFIX . "order_total AS ot ON (o.order_id = ot.order_id AND ot.code = 'shipping')
 			WHERE o.order_id = '" . (int)$order_id . "'
 		");
-		
+
 		if (!$query->num_rows)
 			return;
-			
+
 		$order = $query->row;
-		
+
 		$status = null;
+
 		$emagmp_order_states = array(
 			'emagmp_order_state_id_initial' => 2,
 			'emagmp_order_state_id_finalized' => 4,
 			'emagmp_order_state_id_cancelled' => 0
 		);
-		foreach ($emagmp_order_states as $state_name => $state_id)
-		{
-			if ($order['order_status_id'] == $this->config->get($state_name))
-			{
+		foreach ($emagmp_order_states as $state_name => $state_id) {
+			if ($order['order_status_id'] == $this->config->get($state_name)) {
 				$status = $emagmp_order_states[$state_name];
 				break;
 			}
 		}
-		
-		if ($status === null)
-		{
+
+		if ($status === null) {
 			if (count($order_history['last_definition']))
 				$status = $order_history['last_definition']['status'];
 			else
 				return;
 		}
-		
+
 		$emag_order_products = array();
 		foreach ($order_history['emag_definition']->products as $emag_order_product)
 		{
 			$emag_order_product->status = 0;
 			$emag_order_products[$emag_order_product->product_id] = $emag_order_product;
 		}
-			
+
 		$order_products = array();
 		$query = $this->db->query("
 			SELECT op.*, GROUP_CONCAT(pov.option_value_id ORDER BY pov.option_value_id SEPARATOR '-') as product_options
@@ -96,7 +94,7 @@ class ModelModuleEmagmarketplace extends Model {
 		{
 			$products[] = (array) $emag_order_product;
 		}
-		
+
 		$attachments = array();
 		$order_invoices = array();
 		foreach ($order_invoices as $invoice)
@@ -107,19 +105,19 @@ class ModelModuleEmagmarketplace extends Model {
 				'type' => 1
 			);
 		}
-		
-		require_once(DIR_SYSTEM . 'library/customer.php');
-		require_once(DIR_SYSTEM . 'library/tax.php');
-		
+
+		require_once(DIR_SYSTEM . 'library/cart/customer.php');
+		require_once(DIR_SYSTEM . 'library/cart/tax.php');
+
 		$this->registry->set('customer', new Customer($this->registry));
-		
+
 		$tax = new Tax($this->registry);
 		$tax_rates = $tax->getRates($order['shipping_total'], $this->config->get('flat_tax_class_id'));
 		$first_tax_rate = current($tax_rates);
 		$tax_rate = round($first_tax_rate['rate'] / 100, 2);
 		$order['shipping_tax_rate'] = $tax_rate;
 		$order['shipping_total_with_tax'] = round($order['shipping_total'] * (1 + $tax_rate), 2);
-		
+
 		$new_definition = array(
 			'status' => $status,
 			'id' => $order_history['emag_order_id'],
@@ -127,13 +125,13 @@ class ModelModuleEmagmarketplace extends Model {
 			'shipping_tax' => number_format($order['shipping_total_with_tax'], 2, ".", ""),
 			'attachments' => $attachments
 		);
-		
+
 		$emag_definition = (array) $order_history['emag_definition'];
 		foreach ($emag_definition as $key => $value)
 		{
 			if (is_object($value))
 				$value = (array) $value;
-				
+
 			if (is_array($value))
 			{
 				foreach ($value as $k => $v)
@@ -146,13 +144,14 @@ class ModelModuleEmagmarketplace extends Model {
 			if (!isset($new_definition[$key]))
 				$new_definition[$key] = $value;
 		}
-			
+
 		$emagmp_api_call = new EmagMarketplaceAPICall();
 		$emagmp_api_call->resource = 'order';
 		$emagmp_api_call->action = 'save';
 		$emagmp_api_call->data = array(
 			$new_definition
 		);
+
 		$emagmp_api_call->last_definition = serialize($new_definition);
 		$emagmp_api_call->id_order = $order['order_id'];
 		$emagmp_api_call->execute();
@@ -160,10 +159,10 @@ class ModelModuleEmagmarketplace extends Model {
 		
 		return $this->refreshEmagOrder($order, $order_history);
 	}
-	
+
 	public function refreshEmagOrder($order, $order_history)
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		// re-read order & update if necessary
@@ -177,7 +176,7 @@ class ModelModuleEmagmarketplace extends Model {
 		{
 			return;
 		}
-		
+
 		$emagmp_api_call = new EmagMarketplaceAPICall();
 		$emagmp_api_call->resource = 'order';
 		$emagmp_api_call->action = 'read';
@@ -195,8 +194,8 @@ class ModelModuleEmagmarketplace extends Model {
 		
 		$order_updated = false;
 		
-		require_once(DIR_SYSTEM . 'library/customer.php');
-		require_once(DIR_SYSTEM . 'library/tax.php');
+		require_once(DIR_SYSTEM . 'library/cart/customer.php');
+		require_once(DIR_SYSTEM . 'library/cart/tax.php');
 		
 		$this->registry->set('customer', new Customer($this->registry));
 		
@@ -209,7 +208,7 @@ class ModelModuleEmagmarketplace extends Model {
 			LEFT JOIN " . DB_PREFIX . "option_description od ON (o.option_id = od.option_id)
 			LEFT JOIN " . DB_PREFIX . "option_value ov ON (o.option_id = ov.option_id)
 			LEFT JOIN " . DB_PREFIX . "option_value_description ovd ON (ov.option_value_id = ovd.option_value_id)
-			WHERE od.language_id = '" . (int)$this->config->get('emagmp_product_language_id') . "' AND ovd.language_id = '" . (int)$this->config->get('emagmp_product_language_id') . "'
+			WHERE od.language_id = '" . (int)$this->config->get('module_emagmp_product_language_id') . "' AND ovd.language_id = '" . (int)$this->config->get('module_emagmp_product_language_id') . "'
 		");
 		foreach ($query->rows as $row) {
 			$option_values[$row['option_value_id']] = $row;
@@ -224,7 +223,7 @@ class ModelModuleEmagmarketplace extends Model {
 		foreach ($query->rows as $row) {
 			$order_totals[$row['code']] = $row['value'];
 		}
-		
+
 		$order_totals['shipping_tax'] = $order['shipping_total_with_tax'] - $order['shipping_total'];
 		$order_totals['sub_total_tax'] = $order_totals['tax'] - $order_totals['shipping_tax'];
 
@@ -576,7 +575,7 @@ class ModelModuleEmagmarketplace extends Model {
 	
 	public function get_combination_info($product_id, $product_options, $force_create = false)
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		$product_id = (int)$product_id;
@@ -616,14 +615,14 @@ class ModelModuleEmagmarketplace extends Model {
 	
 	public function updateProduct($product_id = null, $delta = true)
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		$this->load->model('catalog/product');
 		$this->load->model('tool/image');
 
-		require_once(DIR_SYSTEM . 'library/customer.php');
-		require_once(DIR_SYSTEM . 'library/tax.php');
+		require_once(DIR_SYSTEM . 'library/cart/customer.php');
+		require_once(DIR_SYSTEM . 'library/cart/tax.php');
 
 		$this->registry->set('customer', new Customer($this->registry));
 		$tax = new Tax($this->registry);
@@ -635,7 +634,7 @@ class ModelModuleEmagmarketplace extends Model {
 			SELECT *
 			FROM " . DB_PREFIX . "option_value ov
 			LEFT JOIN " . DB_PREFIX . "option_value_description ovd ON (ov.option_value_id = ovd.option_value_id)
-			WHERE ovd.language_id = '" . (int)$this->config->get('emagmp_product_language_id') . "'
+			WHERE ovd.language_id = '" . (int)$this->config->get('module_emagmp_product_language_id') . "'
 		");
 		foreach ($query->rows as $row) {
 			$option_values[$row['option_value_id']] = $row;
@@ -703,10 +702,10 @@ class ModelModuleEmagmarketplace extends Model {
 			FROM `'.DB_PREFIX.'emagmp_categories` ec
 			JOIN `'.DB_PREFIX.'product_to_category` pc ON (ec.category_id = pc.category_id)
 			JOIN `'.DB_PREFIX.'product` p ON (pc.product_id = p.product_id)
-			JOIN '.DB_PREFIX.'product_description as pd on (p.product_id = pd.product_id and pd.language_id = '.(int)$this->config->get('emagmp_product_language_id').')
+			JOIN '.DB_PREFIX.'product_description as pd on (p.product_id = pd.product_id and pd.language_id = '.(int)$this->config->get('module_emagmp_product_language_id').')
 			LEFT JOIN '.DB_PREFIX.'manufacturer as m on (p.manufacturer_id = m.manufacturer_id)
 			LEFT JOIN `'.DB_PREFIX.'emagmp_products` ep ON (p.`product_id` = ep.`product_id`)
-			LEFT JOIN `'.DB_PREFIX.'product_option` po ON (p.`product_id` = po.`product_id`' . ($this->config->get('emagmp_product_option_required') ? ' and po.required = 1' : '') . ')
+			LEFT JOIN `'.DB_PREFIX.'product_option` po ON (p.`product_id` = po.`product_id`' . ($this->config->get('module_emagmp_product_option_required') ? ' and po.required = 1' : '') . ')
 			LEFT JOIN `'.DB_PREFIX.'product_option_value` pov ON (po.`product_option_id` = pov.`product_option_id`)
 			WHERE ec.emag_category_id > 0 AND ec.sync_active = 1
 		';
@@ -843,7 +842,7 @@ class ModelModuleEmagmarketplace extends Model {
 			$query = $this->db->query("
 				SELECT pa.attribute_id, pa.text
 				FROM " . DB_PREFIX . "product_attribute pa
-				WHERE pa.product_id = '" . (int)$row['product_id'] . "' AND pa.language_id = '" . (int)$this->config->get('emagmp_product_language_id') . "'
+				WHERE pa.product_id = '" . (int)$row['product_id'] . "' AND pa.language_id = '" . (int)$this->config->get('module_emagmp_product_language_id') . "'
 			");
 			foreach ($query->rows as $attribute) {
 				$attributes[$attribute['attribute_id']] = $attribute['text'];
@@ -859,8 +858,8 @@ class ModelModuleEmagmarketplace extends Model {
 			else
 				$availability = 3;
 				
-			$warranty = (int) $this->config->get('emagmp_product_warranty');
-			$handling_time = (int) $this->config->get('emagmp_handling_time');
+			$warranty = (int)$this->config->get('module_emagmp_product_warranty');
+			$handling_time = (int)$this->config->get('module_emagmp_handling_time');
 				
 			$product_data = array(
 				'id' => $combination_id,
@@ -969,7 +968,7 @@ class ModelModuleEmagmarketplace extends Model {
 	
 	public function deleteProduct($product_id, $product_option_list = array())
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		$sql = "
@@ -1058,10 +1057,10 @@ class EmagMarketplaceAPICall
 		$this->config = $registry->get('config');
 		$this->db = $registry->get('db');
 		
-		$this->emagmp_api_url = $this->config->get('emagmp_api_url');
-		$this->emagmp_vendorcode = $this->config->get('emagmp_vendorcode');
-		$this->emagmp_vendorusername = $this->config->get('emagmp_vendorusername');
-		$this->emagmp_vendorpassword = $this->config->get('emagmp_vendorpassword');
+		$this->emagmp_api_url = $this->config->get('module_emagmp_api_url');
+		$this->emagmp_vendorcode = $this->config->get('module_emagmp_vendorcode');
+		$this->emagmp_vendorusername = $this->config->get('module_emagmp_vendorusername');
+		$this->emagmp_vendorpassword = $this->config->get('module_emagmp_vendorpassword');
 		
 		if (!$id)
 		{
@@ -1098,7 +1097,7 @@ class EmagMarketplaceAPICall
 	
 	public function execute()
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		$debug_info = array(
@@ -1109,12 +1108,16 @@ class EmagMarketplaceAPICall
 			'others' => ''
 		);
 		
-		$hash = sha1(http_build_query($this->data) . sha1($this->emagmp_vendorpassword));
+		$hash = base64_encode($this->emagmp_vendorusername .':'. $this->emagmp_vendorpassword);
+			$headers = array(
+				'Authorization: Basic ' . $hash
+			);
+
 		$requestData = array(
 		    'code' => $this->emagmp_vendorcode,
-		    'username' => $this->emagmp_vendorusername,
+		    //'username' => $this->emagmp_vendorusername,
 		    'data' => $this->data,
-		    'hash' => $hash,
+		    //'hash' => $hash,
 		    'debug_info' => $debug_info
 		);
 
@@ -1128,6 +1131,7 @@ class EmagMarketplaceAPICall
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		//curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
 		curl_setopt($ch, CURLOPT_HEADER, false);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		//curl_setopt($ch, CURLINFO_HEADER_OUT, true);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 		curl_setopt($ch, CURLOPT_POST, true);
@@ -1215,7 +1219,7 @@ class EmagMarketplaceAPICall
 	
 	public function save()
 	{
-		if (!$this->config->get('emagmp_url'))
+		if (!$this->config->get('module_emagmp_url'))
 			return;
 			
 		$fp = fopen(DIR_LOGS.'emagmp_call_queue.txt', 'a');

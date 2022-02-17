@@ -3,7 +3,7 @@
 $_['heading_title']       = 'eMAG Marketplace';
 
 // Text
-$_['text_module']         = 'Modules';
+$_['text_extension']      = 'Extensions';
 $_['text_success']        = 'Success: You have modified module eMAG Marketplace!';
 $_['text_content_top']    = 'Content Top';
 $_['text_content_bottom'] = 'Content Bottom';
